@@ -101,8 +101,8 @@ if uploaded_file is not None:
                         if resultados:
                             df_resultados = pd.DataFrame(resultados)
                             
-                            st.success(f"Busca finalizada! Foram encontrados {len(df_resultados[df_resultados['instagram_url'] != 'Não encontrado'])} perfis de Instagram.")
-                            
+                            perfis_validados = len(df_resultados[df_resultados['status_validacao'] == 'Perfil Validado'])
+                            st.success(f"Busca finalizada! Foram encontrados e validados {perfis_validados} perfis de Instagram.")                            
                             # Exibe os resultados
                             st.dataframe(df_resultados)
                             

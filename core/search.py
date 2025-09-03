@@ -92,13 +92,11 @@ def buscar_e_validar_perfil(
                 if "instagram.com" in url:
                     descricao = resultado.get("body", "") + " " + resultado.get("title", "")
                     
-                    # Realiza a validação
                     tem_corresp, palavras_encontradas = verificar_correspondencia_descricao(
                         palavras_chave_empresa, descricao
                     )
                     
                     if tem_corresp:
-                        # Limpa a URL para retornar apenas o perfil principal
                         clean_url = url.split("?")[0]
                         if clean_url.endswith('/'):
                             clean_url = clean_url[:-1]
@@ -114,7 +112,6 @@ def processar_empresa(empresa_dados: pd.Series) -> Dict[str, Any]:
     Processa uma única empresa: extrai palavras-chave, busca e valida o perfil.
     Retorna um dicionário com o resultado detalhado.
     """
-    # Extrai dados básicos do registro da empresa
     cnpj = empresa_dados.get('cnpj_basico', '')
     razao_social = empresa_dados.get('razao_social', '')
     municipio = empresa_dados.get('municipio', '')
@@ -164,13 +161,11 @@ def buscar_em_lote(empresas_df: pd.DataFrame) -> List[Dict[str, Any]]:
     resultados = []
     
     with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
-        # Submete uma tarefa para cada linha (pd.Series) do DataFrame
         futures = [
             executor.submit(processar_empresa, row)
             for index, row in empresas_df.iterrows()
         ]
         
-        # Coleta os resultados à medida que ficam prontos
         for future in as_completed(futures):
             try:
                 resultados.append(future.result())
