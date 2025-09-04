@@ -2,7 +2,7 @@
 
 import streamlit as st
 import pandas as pd
-import io
+import os
 from core.search import buscar_em_lote
 
 # --- Configuração da Página ---
@@ -12,25 +12,55 @@ st.set_page_config(
     layout="wide"
 )
 
+DATA_FILE_PATH = os.path.join("data", "tab_2_ceps.csv")
+CNAE_DESCRIPTIONS_PATH = os.path.join("data", "codigos_cnae.csv")
+
+SITUACAO_CADASTRAL_MAP = {
+    "1": "Nula",
+    "2": "Ativa",
+    "3": "Suspensa",
+    "4": "Inapta",
+    "5": "Ativa Não Regular",
+    "8": "Baixada",
+}
+
 # --- Funções Auxiliares ---
 
 @st.cache_data
-def carregar_dados(arquivo):
-    """Carrega e processa o arquivo CSV, tratando possíveis erros."""
+def carregar_dados_empresas(caminho_arquivo):
+    """Carrega e processa o arquivo de empresas, tratando erros e validando estrutura."""
+    if not os.path.exists(caminho_arquivo):
+        st.error(f"Erro: Arquivo de dados não encontrado em '{caminho_arquivo}'.")
+        return None
     try:
-        # Lê o arquivo CSV. O separador é inferido, mas pode ser especificado se necessário.
-        df = pd.read_csv(arquivo)
+        df = pd.read_csv(caminho_arquivo, dtype=str)
         
-        # Limpeza básica: remove espaços em branco das colunas de texto
-        for col in df.select_dtypes(include=['object']).columns:
-            df[col] = df[col].str.strip()
-            
-        # Converte colunas importantes para o tipo correto para evitar erros
-        df['cnpj_basico'] = df['cnpj_basico'].astype(str)
-        df['cnae_fiscal_principal'] = df['cnae_fiscal_principal'].astype(str)
+        # Validação das colunas essenciais
+        colunas_necessarias = ["cnpj_basico", "razao_social", "municipio", "cnae_fiscal_principal", "situacao_cadastral"]
+        if not all(col in df.columns for col in colunas_necessarias):
+            st.error(f"O arquivo de dados precisa conter as colunas: {', '.join(colunas_necessarias)}")
+            return None
+        
+        # Cria a coluna com a descrição da situação cadastral
+        df['situacao_cadastral_desc'] = df['situacao_cadastral'].map(SITUACAO_CADASTRAL_MAP).fillna("Desconhecida")
+        
         return df
     except Exception as e:
-        st.error(f"Erro ao carregar o arquivo: {e}")
+        st.error(f"Erro ao carregar ou processar o arquivo de empresas: {e}")
+        return None
+
+@st.cache_data
+def carregar_descricoes_cnae(caminho_arquivo):
+    """Carrega o arquivo com as descrições dos CNAEs."""
+    if not os.path.exists(caminho_arquivo):
+        st.warning(f"Arquivo de descrições de CNAE não encontrado em '{caminho_arquivo}'. As descrições não serão exibidas.")
+        return None
+    try:
+        df_cnae = pd.read_csv(caminho_arquivo, sep=';', dtype=str)
+        df_cnae = df_cnae.rename(columns={'CNAE': 'codigo', 'DESCRIÇÃO': 'descricao'})
+        return df_cnae
+    except Exception as e:
+        st.error(f"Erro ao carregar o arquivo de descrições de CNAE: {e}")
         return None
 
 @st.cache_data
@@ -47,76 +77,78 @@ filtre por um ou mais códigos **CNAE Principal** e, em seguida, busque automati
 """)
 
 # --- Passo 1: Upload do Arquivo ---
-st.header("1. Carregue seu arquivo de dados")
-uploaded_file = st.file_uploader(
-    "Escolha um arquivo CSV (use o `tab_2.csv` da pasta `data/` como exemplo)",
-    type=["csv", "txt"]
-)
+df_empresas = carregar_dados_empresas(DATA_FILE_PATH)
+df_cnae_desc = carregar_descricoes_cnae(CNAE_DESCRIPTIONS_PATH)
 
-if uploaded_file is not None:
-    df = carregar_dados(uploaded_file)
+if df_empresas is not None:
+    st.header("1. Filtre as empresas por CNAE")
     
-    if df is not None:
-        st.success(f"Arquivo carregado com sucesso! Encontradas {len(df)} empresas.")
+    cnae_options_display = ["Selecione uma atividade..."]
+    cnae_code_map = {}
+    
+    if df_cnae_desc is not None:
+        # Cruza os CNAEs existentes no arquivo de empresas com suas descrições
+        cnaes_unicos = pd.DataFrame(df_empresas['cnae_fiscal_principal'].unique(), columns=['codigo'])
+        cnaes_com_descricao = pd.merge(cnaes_unicos, df_cnae_desc, on='codigo', how='left').fillna('Descrição não encontrada')
         
-        # Validação das colunas necessárias
-        colunas_necessarias = ["cnpj_basico", "razao_social", "municipio", "cnae_fiscal_principal"]
-        if not all(col in df.columns for col in colunas_necessarias):
-            st.error(f"O arquivo precisa conter as seguintes colunas: {', '.join(colunas_necessarias)}")
-        else:
-            # --- Passo 2: Filtro por CNAE ---
-            st.header("2. Filtre as empresas por CNAE")
-            
-            # Pega os CNAEs únicos e os ordena
-            cnaes_unicos = sorted(df['cnae_fiscal_principal'].unique())
-            
-            cnae_selecionado = st.selectbox(
-                "Digite ou selecione o CNAE Fiscal Principal",
-                options=cnaes_unicos,
-                index=None,
-                placeholder="Selecione o CNAE desejado..."
-            )
-            
-            if cnae_selecionado:
-                # Filtra o DataFrame com base no CNAE selecionado
-                df_filtrado = df[df['cnae_fiscal_principal'] == cnae_selecionado].copy()
-                st.write(f"Foram encontradas **{len(df_filtrado)}** empresas com o CNAE **{cnae_selecionado}**.")
-                
-                if not df_filtrado.empty:
-                    st.dataframe(df_filtrado)
-                    
-                    # --- Passo 3: Iniciar a Busca ---
-                    st.header("3. Inicie a busca pelos perfis")
-                    if st.button("🔎 Buscar Perfis do Instagram", type="primary"):
-                        
-                        with st.spinner("Buscando perfis... Isso pode levar alguns minutos, dependendo do número de empresas."):
-                            # Barra de progresso para feedback visual
-                            progress_bar = st.progress(0, text="Iniciando busca...")
-                            
-                            # Executa a busca em lote
-                            resultados = buscar_em_lote(df_filtrado)
-                            
-                            progress_bar.progress(1.0, text="Busca concluída!")
+        for _, row in cnaes_com_descricao.sort_values(by='codigo').iterrows():
+            display_text = f"{row['codigo']} - {row['descricao']}"
+            cnae_options_display.append(display_text)
+            cnae_code_map[display_text] = row['codigo'] 
+    else:
+        # Fallback: Se o arquivo de descrição não existir, mostra apenas os códigos
+        cnae_options_display.extend(sorted(df_empresas['cnae_fiscal_principal'].unique()))
 
-                        if resultados:
-                            df_resultados = pd.DataFrame(resultados)
-                            
-                            perfis_validados = len(df_resultados[df_resultados['status_validacao'] == 'Perfil Validado'])
-                            st.success(f"Busca finalizada! Foram encontrados e validados {perfis_validados} perfis de Instagram.")                            
-                            # Exibe os resultados
-                            st.dataframe(df_resultados)
-                            
-                            # --- Passo 4: Exportar Resultados ---
-                            st.header("4. Exporte os resultados")
-                            csv_export = convert_df_to_csv(df_resultados)
-                            
-                            st.download_button(
-                                label="📥 Baixar resultados em CSV",
-                                data=csv_export,
-                                file_name=f"instagram_resultados_cnae_{cnae_selecionado}.csv",
-                                mime="text/csv",
-                            )
-                        else:
-                            st.warning("Nenhum resultado foi retornado pela busca.")
+    # Cria o selectbox com as opções enriquecidas
+    selecao_formatada = st.selectbox(
+        "Selecione a Atividade Econômica (CNAE) Principal",
+        options=cnae_options_display
+    )
+    
+    # Extrai o código CNAE da seleção do usuário
+    cnae_selecionado = None
+    if selecao_formatada != "Selecione uma atividade...":
+        if df_cnae_desc is not None:
+            cnae_selecionado = cnae_code_map.get(selecao_formatada)
+        else:
+            cnae_selecionado = selecao_formatada
+            
+    if cnae_selecionado:
+        # Filtra o DataFrame com base no CNAE selecionado
+        df_filtrado = df_empresas[df_empresas['cnae_fiscal_principal'] == cnae_selecionado].copy()
+        
+        st.write(f"Foram encontradas **{len(df_filtrado)}** empresas com o CNAE **{cnae_selecionado}**.")
+        
+        if not df_filtrado.empty:
+            st.dataframe(df_filtrado[[
+                'razao_social', 
+                'nome_fantasia', 
+                'municipio_nome', 
+                'situacao_cadastral_desc' 
+            ]].rename(columns={'situacao_cadastral_desc': 'Situação Cadastral'})) 
+            
+            st.header("2. Inicie a busca pelos perfis")
+            if st.button("🔎 Buscar Perfis do Instagram", type="primary"):
+                with st.spinner("Buscando e validando perfis... Isso pode levar alguns minutos."):
+                    resultados = buscar_em_lote(df_filtrado)
+
+                if resultados:
+                    df_resultados = pd.DataFrame(resultados)
+                    perfis_validados = len(df_resultados[df_resultados['status_validacao'] == 'Perfil Validado'])
+                    st.success(f"Busca finalizada! Foram encontrados e validados {perfis_validados} perfis de Instagram.")
+                    
+                    st.dataframe(df_resultados)
+                    
+                    st.header("3. Exporte os resultados")
+                    csv_export = convert_df_to_csv(df_resultados)
+                    
+                    st.download_button(
+                        label="📥 Baixar resultados em CSV",
+                        data=csv_export,
+                        file_name=f"instagram_resultados_cnae_{cnae_selecionado}.csv",
+                        mime="text/csv",
+                    )
+                else:
+                    st.warning("Nenhum resultado foi retornado pela busca.")
 else:
-    st.info("Aguardando o upload de um arquivo CSV para começar.")
+    st.info("A aplicação não pôde ser iniciada. Verifique os arquivos de dados na pasta 'data/'.")
