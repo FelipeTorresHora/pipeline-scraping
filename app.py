@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 DATA_FILE_PATH = os.path.join("data", "tab_2_ceps.csv")
-CNAE_DESCRIPTIONS_PATH = os.path.join("data", "codigos_cnae.csv")
+CNAE_DESCRIPTIONS_PATH = os.path.join("data", "codigos_cnae_2.csv")
 
 SITUACAO_CADASTRAL_MAP = {
     "1": "Nula",
